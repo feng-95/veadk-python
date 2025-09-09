@@ -30,6 +30,13 @@ from typing_extensions import override
 
 from veadk.config import getenv
 from veadk.tracing.telemetry.exporters.base_exporter import BaseExporter
+from veadk.tracing.telemetry.metrics.buckets import (
+    _GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS,
+    _GEN_AI_SERVER_TIME_PER_OUTPUT_TOKEN_BUCKETS,
+    _GEN_AI_SERVER_TIME_TO_FIRST_TOKEN_BUCKETS,
+    _GEN_AI_CLIENT_TOKEN_USAGE_BUCKETS,
+)
+from veadk.tracing.telemetry.metrics import Meters
 from veadk.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,14 +72,45 @@ class MeterUploader:
 
         # create meter attributes
         self.llm_invoke_counter = self.meter.create_counter(
-            name="gen_ai.chat.count",
+            name=Meters.LLM_CHAT_COUNT,
             description="Number of LLM invocations",
             unit="count",
         )
         self.token_usage = self.meter.create_histogram(
-            name="gen_ai.client.token.usage",
+            name=Meters.LLM_TOKEN_USAGE,
             description="Token consumption of LLM invocations",
             unit="count",
+            explicit_bucket_boundaries_advisory=_GEN_AI_CLIENT_TOKEN_USAGE_BUCKETS
+        )
+        self.duration_histogram = self.meter.create_histogram(
+            name=Meters.LLM_OPERATION_DURATION,
+            unit="s",
+            description="GenAI operation duration",
+            explicit_bucket_boundaries_advisory=_GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS
+        )
+        # 统计 exception，酌情判断是否好获取？
+        self.chat_exception_counter = self.meter.create_counter(
+            name=Meters.LLM_COMPLETIONS_EXCEPTIONS,
+            unit="time",
+            description="Number of exceptions occurred during chat completions",
+        )
+        self.streaming_time_to_first_token = self.meter.create_histogram(
+            name=Meters.LLM_STREAMING_TIME_TO_FIRST_TOKEN,
+            unit="s",
+            description="Time to first token in streaming chat completions",
+            explicit_bucket_boundaries_advisory=_GEN_AI_SERVER_TIME_TO_FIRST_TOKEN_BUCKETS
+        )
+        self.streaming_time_to_generate = self.meter.create_histogram(
+            name=Meters.LLM_STREAMING_TIME_TO_GENERATE,
+            unit="s",
+            description="Time between first token and completion in streaming chat completions",
+            explicit_bucket_boundaries_advisory=_GEN_AI_CLIENT_OPERATION_DURATION_BUCKETS
+        )
+        self.streaming_time_per_output_token = self.meter.create_histogram(
+            name=Meters.LLM_STREAMING_TIME_PER_OUTPUT_TOKEN,
+            unit="s",
+            description="Time per output token in streaming chat completions",
+            explicit_bucket_boundaries_advisory=_GEN_AI_SERVER_TIME_PER_OUTPUT_TOKEN_BUCKETS
         )
 
     def record(self, llm_request: LlmRequest, llm_response: LlmResponse) -> None:
@@ -98,6 +136,31 @@ class MeterUploader:
             if output_token:
                 token_attributes = {**attributes, "gen_ai_token_type": "output"}
                 self.token_usage.record(output_token, attributes=token_attributes)
+
+            # TODO: get llm duration
+            duration = 5.0
+            if self.duration_histogram:
+                self.duration_histogram.record(duration, attributes=attributes)
+            # TODO: get streaming time to first token
+            time_to_frist_token = 0.1
+            if self.streaming_time_to_first_token:
+                self.streaming_time_to_first_token.record(time_to_frist_token, attributes=attributes)
+            # TODO: get streaming time to generate
+            time_to_generate = 1.0
+            if self.streaming_time_to_generate:
+                self.streaming_time_to_generate.record(time_to_generate, attributes=attributes)
+            # TODO: get streaming time per output token
+            time_per_output_token = 0.01
+            if self.streaming_time_per_output_token:
+                self.streaming_time_per_output_token.record(time_per_output_token, attributes=attributes)
+
+            # TODO: catch exception
+            e = Exception("test")
+            exception_attributes = {**attributes, "error_type": e.__class__.__name__}
+
+            if self.chat_exception_counter:
+                self.chat_exception_counter.add(1, exception_attributes)
+
 
 
 class APMPlusExporterConfig(BaseModel):
