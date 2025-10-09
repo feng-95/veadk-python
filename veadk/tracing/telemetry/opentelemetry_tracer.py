@@ -21,7 +21,7 @@ from typing import Any
 from opentelemetry import trace as trace_api
 from opentelemetry.sdk import trace as trace_sdk
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import TracerProvider, SpanLimits
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import override
@@ -29,12 +29,10 @@ from typing_extensions import override
 from veadk.tracing.base_tracer import BaseTracer
 from veadk.tracing.telemetry.exporters.apmplus_exporter import APMPlusExporter
 from veadk.tracing.telemetry.exporters.base_exporter import BaseExporter
-from veadk.tracing.telemetry.exporters.inmemory_exporter import (
-    _INMEMORY_EXPORTER_INSTANCE,
-    InMemoryExporter,
-)
+from veadk.tracing.telemetry.exporters.inmemory_exporter import InMemoryExporter
 from veadk.utils.logger import get_logger
 from veadk.utils.patches import patch_google_adk_telemetry
+from veadk.utils.misc import get_temp_dir
 
 logger = get_logger(__name__)
 
@@ -81,7 +79,13 @@ class OpentelemetryTracer(BaseModel, BaseTracer):
 
     def _init_global_tracer_provider(self) -> None:
         # set provider anyway, then get global provider
-        trace_api.set_tracer_provider(trace_sdk.TracerProvider())
+        trace_api.set_tracer_provider(
+            trace_sdk.TracerProvider(
+                span_limits=SpanLimits(
+                    max_attributes=4096,
+                )
+            )
+        )
         global_tracer_provider: TracerProvider = trace_api.get_tracer_provider()  # type: ignore
 
         span_processors = global_tracer_provider._active_span_processor._span_processors
@@ -118,7 +122,7 @@ class OpentelemetryTracer(BaseModel, BaseTracer):
                     f"Add span processor for exporter `{exporter.__class__.__name__}` to OpentelemetryTracer failed."
                 )
 
-        self._inmemory_exporter = _INMEMORY_EXPORTER_INSTANCE
+        self._inmemory_exporter = InMemoryExporter()
         if self._inmemory_exporter.processor:
             # make sure the in memory exporter processor is added at index 0
             # because we use this to record all spans
@@ -158,7 +162,7 @@ class OpentelemetryTracer(BaseModel, BaseTracer):
         self,
         user_id: str = "unknown_user_id",
         session_id: str = "unknown_session_id",
-        path: str = "/tmp",
+        path: str = get_temp_dir(),
     ) -> str:
         def _build_trace_file_path(path: str, user_id: str, session_id: str) -> str:
             return f"{path}/{self.name}_{user_id}_{session_id}_{self.trace_id}.json"

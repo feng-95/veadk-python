@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .database_factory import DatabaseFactory
+from pydantic import BaseModel
 
-__all__ = ["DatabaseFactory"]
+
+class KnowledgebaseEntry(BaseModel):
+    """Represents a single entry in the knowledgebase."""
+
+    # The main content of the knowledgebase entry.
+    content: str
+
+    # Optional metadata associated with the entry.
+    metadata: dict | None = None

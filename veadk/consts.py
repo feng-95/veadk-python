@@ -27,6 +27,8 @@ DEFAULT_MODEL_EXTRA_CONFIG = {
         "x-is-encrypted": getenv("MODEL_AGENT_ENCRYPTED", "true"),
         "veadk-source": "veadk",
         "veadk-version": VERSION,
+        "User-Agent": f"VeADK/{VERSION}",
+        "X-Client-Request-Id": f"veadk/{VERSION}",
     },
     "extra_body": {
         "caching": {
@@ -56,6 +58,11 @@ DEFAULT_CR_REPO_NAME = "veadk-user-repo"
 DEFAULT_TLS_LOG_PROJECT_NAME = "veadk-logs"
 DEFAULT_TLS_TRACING_INSTANCE_NAME = "veadk-tracing"
 
-DEFAULT_TOS_BUCKET_NAME = "veadk-default-bucket"
+DEFAULT_TOS_BUCKET_NAME = "ark-tutorial"
 
 DEFAULT_COZELOOP_SPACE_NAME = "VeADK Space"
+
+DEFAULT_TEXT_TO_IMAGE_MODEL_NAME = "doubao-seedream-3-0-t2i-250415"
+DEFAULT_IMAGE_EDIT_MODEL_NAME = "doubao-seededit-3-0-i2i-250628"
+DEFAULT_VIDEO_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
+DEFAULT_IMAGE_GENERATE_MODEL_NAME = "doubao-seedream-4-0-250828"

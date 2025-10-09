@@ -17,7 +17,7 @@ import json
 import time
 import uuid
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 from google.adk import Runner
 from google.adk.evaluation.eval_set import EvalSet
@@ -120,56 +120,72 @@ class BaseEvaluator:
             # Extract tool_uses from spans with name starting with "execute_tool"
             for span in spans:
                 if span["name"].startswith("execute_tool"):
+                    # Extract tool parameters from gen_ai.tool.input
+                    tool_input_str = span["attributes"].get("gen_ai.tool.input", "{}")
+                    try:
+                        tool_input = json.loads(tool_input_str)
+                        tool_args = tool_input.get("parameters", {})
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    # Extract the tool call ID from gen_ai.tool.output
+                    tool_output_str = span["attributes"].get("gen_ai.tool.output", "{}")
+                    tool_call_id = None
+                    try:
+                        tool_output = json.loads(tool_output_str)
+                        tool_call_id = tool_output.get("id", None)
+                    except json.JSONDecodeError:
+                        tool_call_id = None
+
                     tool_uses.append(
                         {
-                            "id": span["attributes"].get("gen_ai.tool.call.id", None),
-                            "args": json.loads(
-                                span["attributes"].get(
-                                    "gcp.vertex.agent.tool_call_args", "{}"
-                                )
-                            ),
+                            "id": tool_call_id,
+                            "args": tool_args,
                             "name": span["attributes"].get("gen_ai.tool.name", None),
                         }
                     )
 
-            # Extract conversation data from spans with name starting with "invocation"
-            for span in spans:
-                if span["name"].startswith("invocation"):
-                    # Parse input.value and output.value as JSON
-                    input_value = json.loads(
-                        span["attributes"].get("input.value", "{}")
-                    )
-                    output_value = json.loads(
-                        span["attributes"].get("output.value", "{}")
-                    )
+            # Extract conversation data from call_llm spans
+            user_input = ""
+            final_output = ""
 
-                    user_content = json.loads(input_value.get("new_message", {}))
-                    final_response = json.loads(json.dumps(user_content))
-                    final_response["parts"][0]["text"] = (
-                        output_value.get("content", {})
-                        .get("parts", [{}])[0]
-                        .get("text", None)
-                    )
-                    final_response["role"] = None
-                    conversation.append(
-                        {
-                            "invocation_id": output_value.get(
-                                "invocation_id", str(uuid.uuid4())
-                            ),
-                            "user_content": user_content,
-                            "final_response": final_response,
-                            "intermediate_data": {
-                                "tool_uses": tool_uses,
-                                "intermediate_responses": [],
-                            },
-                            "creation_timestamp": span["start_time"] / 1e9,
-                        }
-                    )
-                    user_id = input_value.get("user_id", None)
-                    app_name = (
-                        span["name"].replace("invocation", "").strip().strip("[]")
-                    )
-                    creation_timestamp = span["start_time"] / 1e9
+            # Find the first call_llm span for user input and the last one for final output
+            call_llm_spans = [span for span in spans if span["name"] == "call_llm"]
+
+            if call_llm_spans:
+                # Get user input from the first call_llm span
+                first_span = call_llm_spans[0]
+                user_input = first_span["attributes"].get("gen_ai.prompt.0.content", "")
+
+                # Get final output from the last call_llm span
+                last_span = call_llm_spans[-1]
+                final_output = last_span["attributes"].get(
+                    "gen_ai.completion.0.content", ""
+                )
+
+                # Get metadata from any span
+                app_name = first_span["attributes"].get("gen_ai.app.name", "")
+                user_id = first_span["attributes"].get("gen_ai.user.id", "")
+                creation_timestamp = first_span["start_time"] / 1e9
+
+            if user_input and final_output:
+                # Create user_content and final_response in the expected format
+                user_content = {"role": "user", "parts": [{"text": user_input}]}
+
+                final_response = {"role": "model", "parts": [{"text": final_output}]}
+
+                conversation.append(
+                    {
+                        "invocation_id": str(uuid.uuid4()),
+                        "user_content": user_content,
+                        "final_response": final_response,
+                        "intermediate_data": {
+                            "tool_uses": tool_uses,
+                            "intermediate_responses": [],
+                        },
+                        "creation_timestamp": creation_timestamp,
+                    }
+                )
 
         eval_cases.append(
             {
@@ -194,33 +210,43 @@ class BaseEvaluator:
 
         return evalset
 
-    def build_eval_set(self, file_path: str):
+    def build_eval_set(
+        self, eval_set: Optional[EvalSet] = None, file_path: Optional[str] = None
+    ):
         """Generate evaluation data from a given file and assign it to the class attribute `invocation_list`."""
-        eval_case_data_list: list[EvalTestCase] = []
 
-        try:
-            with open(file_path, "r") as f:
-                file_content = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON format in file {file_path}: {e}")
-        except Exception as e:
-            raise ValueError(f"Error reading file {file_path}: {e}")
-
-        if isinstance(file_content, dict) and "eval_cases" in file_content:
-            eval_cases = self._build_eval_set_from_eval_json(file_path).eval_cases
-        elif (
-            isinstance(file_content, list)
-            and len(file_content) > 0
-            and all(
-                isinstance(span, dict) and "trace_id" in span for span in file_content
-            )
-        ):
-            eval_cases = self._build_eval_set_from_tracing_json(file_path).eval_cases
+        if eval_set is None and file_path is None:
+            raise ValueError("eval_set or file_path is required")
+        if eval_set:
+            eval_cases = eval_set.eval_cases
         else:
-            raise ValueError(
-                f"Unsupported file format in {file_path}. Please provide a valid file."
-            )
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    file_content = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON format in file {file_path}: {e}")
+            except Exception as e:
+                raise ValueError(f"Error reading file {file_path}: {e}")
 
+            if isinstance(file_content, dict) and "eval_cases" in file_content:
+                eval_cases = self._build_eval_set_from_eval_json(file_path).eval_cases
+            elif (
+                isinstance(file_content, list)
+                and len(file_content) > 0
+                and all(
+                    isinstance(span, dict) and "trace_id" in span
+                    for span in file_content
+                )
+            ):
+                eval_cases = self._build_eval_set_from_tracing_json(
+                    file_path
+                ).eval_cases
+            else:
+                raise ValueError(
+                    f"Unsupported file format in {file_path}. Please provide a valid file."
+                )
+
+        eval_case_data_list: list[EvalTestCase] = []
         for eval_case in eval_cases:
             eval_case_data = EvalTestCase(invocations=[])
             if eval_case.session_input:
@@ -368,8 +394,9 @@ class BaseEvaluator:
     @abstractmethod
     async def evaluate(
         self,
-        eval_set_file_path: str,
         metrics: list[Any],
+        eval_set: Optional[EvalSet],
+        eval_set_file_path: Optional[str],
         eval_id: str,
     ):
         """An abstract method for evaluation based on metrics。"""
