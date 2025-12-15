@@ -161,6 +161,7 @@ class OpentelemetryTracer(BaseModel, BaseTracer):
         duplicate exporter detection and in-memory span collection setup.
         """
         # set provider anyway, then get global provider
+        # set if not exist
         trace_api.set_tracer_provider(
             trace_sdk.TracerProvider(
                 span_limits=SpanLimits(
@@ -177,12 +178,13 @@ class OpentelemetryTracer(BaseModel, BaseTracer):
             and "apmplus" in p.span_exporter._endpoint
             for p in span_processors
         )
-
         if have_apmplus_exporter:
             self.exporters = [
                 e for e in self.exporters if not isinstance(e, APMPlusExporter)
             ]
-
+        # TODO：这里逻辑需要改下，改成调用每个 exporter 的 register 方法，把 exporter 注册到 global_tracer_provider 中
+        # 这样可以避免重复注册 exporter，并且可以在 exporter 中配置 exporter 的属性，比如 endpoint、headers、resource_attributes 等
+        # 对于 apmplus 也可以再做特殊处理，兼容自动埋点
         for exporter in self.exporters:
             processor = exporter.processor
             resource_attributes = exporter.resource_attributes

@@ -619,6 +619,7 @@ class Agent(LlmAgent):
         )
         from veadk.tracing.telemetry.exporters.tls_exporter import TLSExporter
 
+        # TODO: 这里 append 实际上并没有修改 otel global provider，并没有生效
         if enable_apmplus_tracer and not any(
             isinstance(e, APMPlusExporter) for e in exporters
         ):
